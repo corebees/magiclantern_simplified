@@ -145,6 +145,12 @@ PROP_HANDLER(PROP_DOF_PREVIEW_MAYBE) // len=2
 }
 
 volatile int lv = 0;
+
+#ifdef CONFIG_5D4
+/* Real Canon LiveView state, private to the incomplete 5D4 port. */
+volatile int lv_5d4 = 0;
+#endif
+
 volatile int lv_paused = 0; // not a property, but related
 
 int get_expsim();
@@ -234,10 +240,14 @@ PROP_HANDLER(PROP_VIDEO_MODE)
     #endif
 }
 
-#ifdef CONFIG_LIVEVIEW
+#if defined(CONFIG_LIVEVIEW) || defined(CONFIG_5D4)
 PROP_HANDLER( PROP_LV_ACTION )
 {
+#ifdef CONFIG_5D4
+    lv_5d4 = !buf[0];
+#else
     lv = !buf[0];
+#endif
 }
 #endif
 
