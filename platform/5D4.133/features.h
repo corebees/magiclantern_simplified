@@ -7,7 +7,7 @@
 // This does not yet work (assumes ARM, not Thumb).  Alex recommends
 // a good looking fix:
 // http://www.mcternan.me.uk/ArmStackUnwinding/
-#define CONFIG_CRASH_LOG
+#undef CONFIG_CRASH_LOG
 
 #undef CONFIG_ADDITIONAL_VERSION
 #undef CONFIG_PROP_REQUEST_CHANGE
