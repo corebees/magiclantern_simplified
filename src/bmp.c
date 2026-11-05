@@ -197,13 +197,21 @@ void refresh_yuv_from_rgb(void)
     uint8_t *b = bmp_vram_indexed;
     uint32_t *rgb_data = NULL;
 
-    if (rgb_vram_info != NULL)
+#ifdef CONFIG_5D4
+    /*
+     * 5D4: reacquire Canon's current MARV before every RGBA refresh.
+     * The surface may change during LiveView / GUI transitions.
+     */
+    rgb_vram_preinit();
+#endif
+
+    if (rgb_vram_info != NULL && rgb_vram_info->bitmap_data != NULL)
     {
         rgb_data = (uint32_t *)rgb_vram_info->bitmap_data;
     }
     else
     {
-        DryosDebugMsg(0, 15, "rgb_vram_info was NULL, can't refresh OSD");
+        DryosDebugMsg(0, 15, "rgb_vram_info/bitmap_data was NULL, can't refresh OSD");
         return;
     }
 
@@ -271,7 +279,9 @@ void refresh_yuv_from_rgb(void)
 
 void rgba_buffer_clear()
 {
-    if (rgb_vram_info == NULL) return;
+    if (rgb_vram_info == NULL || rgb_vram_info->bitmap_data == NULL)
+        return;
+
     bzero32(rgb_vram_info->bitmap_data, BMP_VRAM_SIZE*4);
 }
 
