@@ -36,6 +36,19 @@ const uint32_t prop_handler_deny[] =
 // allow writes / allow prop_request_change() for these:
 const uint32_t prop_write_allow [] =
 {
+    /* EXPO01A: White Balance / Kelvin only */
+    PROP_WB_MODE_LV,
+    PROP_WB_KELVIN_LV,
+    PROP_WB_MODE_PH,
+    PROP_WB_KELVIN_PH,
+
+    /* EXPO02B: validated WBShift G/M candidate */
+    PROP_WBS_GM,
+    /* EXPO02C: WBShift B/A candidate */
+    PROP_WBS_BA,
+
+    /* EXPO03A: custom WB gains candidate */
+    PROP_CUSTOM_WB,
 };
 
 // anything not listed above will allow reads but not writes

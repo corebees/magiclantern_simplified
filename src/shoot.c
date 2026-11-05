@@ -1852,6 +1852,28 @@ aperture_toggle( void* priv, int sign)
 
 #ifdef FEATURE_WHITE_BALANCE
 
+#ifdef CONFIG_5D4
+extern volatile int lv_5d4;
+static void canon_auto_wb(void * priv, int sign)
+{
+    (void) priv;
+    (void) sign;
+
+    uint32_t mode = WB_AUTO;
+    prop_request_change(PROP_WB_MODE_LV, &mode, 4);
+    prop_request_change(PROP_WB_MODE_PH, &mode, 4);
+}
+
+static void reset_wb_shift(void * priv, int sign)
+{
+    (void) priv;
+    (void) sign;
+
+    lens_set_wbs_gm(0);
+    lens_set_wbs_ba(0);
+}
+#endif
+
 void kelvin_toggle( void* priv, int sign )
 {
     int k;
@@ -1949,7 +1971,11 @@ static void wbs_gm_auto()
 
 void kelvin_n_gm_auto()
 {
+#ifdef CONFIG_5D4
+    if (lv_5d4)
+#else
     if (lv)
+#endif
     {
         kelvin_auto_flag = 1;
         wbs_gm_auto_flag = 1;
@@ -1963,7 +1989,6 @@ static MENU_UPDATE_FUNC(wb_custom_gain_display)
         p==1 ? lens_info.WBGain_R :
         p==2 ? lens_info.WBGain_G :
                lens_info.WBGain_B ;
-
     int multiplier = 1000 * 1024 / raw_value;
     MENU_SET_NAME(
         "%s multiplier",
@@ -1995,7 +2020,11 @@ wb_custom_gain_toggle( void * priv, int delta )
 
 static int crit_kelvin(int k)
 {
+#ifdef CONFIG_5D4
+    if (!lv_5d4) return 0;
+#else
     if (!lv) return 0;
+#endif
 
     if (k > 0)
     {
@@ -2016,7 +2045,11 @@ static int crit_kelvin(int k)
 
 static int crit_wbs_gm(int k)
 {
+#ifdef CONFIG_5D4
+    if (!lv_5d4) return 0;
+#else
     if (!lv) return 0;
+#endif
 
     k = COERCE(k, -10, 10);
     lens_set_wbs_gm(k);
@@ -3950,6 +3983,18 @@ static struct menu_entry expo_menus[] = {
         .edit_mode = EM_SHOW_LIVEVIEW,
         .submenu_width = 700,
         .children =  (struct menu_entry[]) {
+#ifdef CONFIG_5D4
+            {
+                .name = "Canon Auto WB",
+                .select = canon_auto_wb,
+                .help = "Switch back to Canon automatic white balance.",
+            },
+            {
+                .name = "Reset WB Shift",
+                .select = reset_wb_shift,
+                .help = "Reset Green-Magenta and Blue-Amber WB shifts to zero.",
+            },
+#endif
             {
                 .name = "White Balance",
                 .update    = kelvin_display,
@@ -3959,7 +4004,7 @@ static struct menu_entry expo_menus[] = {
             },
             {
                 .name = "WBShift G/M",
-                .update = wbs_gm_display, 
+                .update = wbs_gm_display,
                 .select = wbs_gm_toggle,
                 .min = -9,
                 .max = 9,
@@ -3969,8 +4014,8 @@ static struct menu_entry expo_menus[] = {
             },
             {
                 .name = "WBShift B/A",
-                .update = wbs_ba_display, 
-                .select = wbs_ba_toggle, 
+                .update = wbs_ba_display,
+                .select = wbs_ba_toggle,
                 .min = -9,
                 .max = 9,
                 .icon_type = IT_PERCENT_OFF,
@@ -3982,7 +4027,8 @@ static struct menu_entry expo_menus[] = {
                 .priv = (void *)(1),
                 .update = wb_custom_gain_display,
                 .select = wb_custom_gain_toggle,
-                .icon_type = IT_PERCENT,
+                /* update callback provides the percent icon */
+                .icon_type = IT_AUTO,
                 .help = "RED channel multiplier, for custom white balance.",
                 .edit_mode = EM_SHOW_LIVEVIEW,
             },
@@ -3991,7 +4037,7 @@ static struct menu_entry expo_menus[] = {
                 .priv = (void *)(2),
                 .update = wb_custom_gain_display,
                 .select = wb_custom_gain_toggle,
-                .icon_type = IT_PERCENT,
+                .icon_type = IT_AUTO,
                 .help = "GREEN channel multiplier, for custom white balance.",
                 .edit_mode = EM_SHOW_LIVEVIEW,
             },
@@ -4000,10 +4046,19 @@ static struct menu_entry expo_menus[] = {
                 .priv = (void *)(3),
                 .update = wb_custom_gain_display,
                 .select = wb_custom_gain_toggle,
-                .icon_type = IT_PERCENT,
+                .icon_type = IT_AUTO,
                 .help = "BLUE channel multiplier, for custom white balance.",
                 .edit_mode = EM_SHOW_LIVEVIEW,
             },
+            {
+                .name = "Auto adjust Kelvin + G/M",
+                .select = kelvin_n_gm_auto,
+                .help = "LiveView: adjust Kelvin and G-M once (Push-button WB).",
+                .depends_on = DEP_LIVEVIEW,
+            },
+#ifdef CONFIG_5D4
+            MENU_EOL
+#else
             /*{
                 .name = "Auto adjust Kelvin",
                 .select = kelvin_auto,
@@ -4021,6 +4076,7 @@ static struct menu_entry expo_menus[] = {
                 .depends_on = DEP_LIVEVIEW,
             },
             MENU_EOL
+#endif
         },
     },
     #endif
