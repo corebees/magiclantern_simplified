@@ -25,8 +25,12 @@
 
 #define CURRENT_GUI_MODE (*(int*)0x6fc0) // from SetGUIRequestMode
 
-#define GUIMODE_PLAY 1
-#define GUIMODE_MENU 2
+/*
+ * 5D4.133: values from the original working 2023 port.
+ * Mode 1 appears to be an image/quick-review state, not PLAY.
+ */
+#define GUIMODE_PLAY 2
+#define GUIMODE_MENU 3
 
 //address of XimrContext structure to redraw in FEATURE_VRAM_RGBA
 #define XIMR_CONTEXT 0x4d1fc // see 0xfe444ff0, check setup for that call
