@@ -16,8 +16,12 @@
 #define BGMT_PLAY 0xB // ?!
 #define BGMT_TRASH 0xD
 
-#define BGMT_PRESS_DP 0x2f
-#define BGMT_UNPRESS_DP 0x35
+/*
+ * 5D4: legacy DP codes removed.
+ * 0x2f and 0x35 belong to the multi-controller on this camera.
+ * Leave BGMT_PRESS_DP / BGMT_UNPRESS_DP undefined until their
+ * real hardware codes are identified.
+ */
 #define BGMT_RATE 0x21
 #define BGMT_REC 0x1E
 
@@ -33,18 +37,23 @@
 //~ #define BGMT_FUNC 0x12
 #define BGMT_PICSTYLE 0x13
 //~ #define BGMT_JOY_CENTER (lv ? 0x1e : 0x3b)
-#define BGMT_JOY_CENTER 0x3e
+#define BGMT_JOY_CENTER 0x37
 
-#define BGMT_PRESS_UP 0x36
-#define BGMT_PRESS_UP_RIGHT 0x37
-#define BGMT_PRESS_UP_LEFT 0x38
-#define BGMT_PRESS_RIGHT 0x39
-#define BGMT_PRESS_LEFT 0x3a
-#define BGMT_PRESS_DOWN_RIGHT 0x3B
-#define BGMT_PRESS_DOWN_LEFT 0x3C
-#define BGMT_PRESS_DOWN 0x3d
+/*
+ * 5D4 multi-controller button codes.
+ * Verified against hardware behavior; these follow the
+ * newer DIGIC 6 GUI event layout rather than the 5D3 layout.
+ */
+#define BGMT_PRESS_UP 0x2f
+#define BGMT_PRESS_UP_RIGHT 0x30
+#define BGMT_PRESS_UP_LEFT 0x31
+#define BGMT_PRESS_RIGHT 0x32
+#define BGMT_PRESS_LEFT 0x33
+#define BGMT_PRESS_DOWN_RIGHT 0x34
+#define BGMT_PRESS_DOWN_LEFT 0x35
+#define BGMT_PRESS_DOWN 0x36
 
-#define BGMT_UNPRESS_UDLR 0x35
+#define BGMT_UNPRESS_UDLR 0x2e
 #define BGMT_PRESS_HALFSHUTTER 0x4e
 
 #define BGMT_FLASH_MOVIE 0
