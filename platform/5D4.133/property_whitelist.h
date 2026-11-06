@@ -29,7 +29,6 @@
 const uint32_t prop_handler_deny[] =
 {
     PROP_MVR_REC_START, // probably related to MVR stubs being all wrong
-    PROP_ISO, // FIXME not a confirmed problem, trying to debug early crash
     PROP_LV_AFFRAME, // ML asserts
 };
 
@@ -49,6 +48,9 @@ const uint32_t prop_write_allow [] =
 
     /* EXPO03A: custom WB gains candidate */
     PROP_CUSTOM_WB,
+
+    /* ISO */
+    PROP_ISO,
 };
 
 // anything not listed above will allow reads but not writes

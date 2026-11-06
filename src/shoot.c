@@ -1649,8 +1649,20 @@ digital_iso_toggle( void * priv, int sign )
     int r = lens_info.raw_iso;
     unsigned int a; int d;
     split_iso(r, &a, &d);
+#ifdef CONFIG_5D4
+    /*
+     * 5D4 PROP_ISO rejects the upstream 1/8-EV intermediate codes.
+     * Canon's normal 1/3-stop sequence maps to digital offsets
+     * -3, 0 and +3 around each full-stop analog ISO.
+     */
+    if (sign > 0)
+        d = (d < 0) ? 0 : 3;
+    else if (sign < 0)
+        d = (d > 0) ? 0 : -3;
+#else
     d = COERCE(d + sign, -3, (a == MAX_ANALOG_ISO ? 16 : 4));
     while (d > 8 && d < 16) d += sign;
+#endif
     lens_set_rawiso(a + d);
 }
 
@@ -1662,10 +1674,15 @@ iso_toggle( void * priv, int sign )
     
     if (is_movie_mode())
     {
+#ifdef FEATURE_EXPO_OVERRIDE
         extern int bv_auto;
+        int iso_max = bv_auto ? MAX_ISO_BV : MAX_ISO;
+#else
+        int iso_max = MAX_ISO;
+#endif
         if (lens_info.raw_iso && priv != (void*)-1)
-        if ((lens_info.raw_iso <= MIN_ISO               && sign < 0) ||
-            (lens_info.raw_iso >= (bv_auto ? MAX_ISO_BV : MAX_ISO) && sign > 0))
+        if ((lens_info.raw_iso <= MIN_ISO && sign < 0) ||
+            (lens_info.raw_iso >= iso_max && sign > 0))
         {
             if (lens_set_rawiso(0)) // ISO auto
                 return;
