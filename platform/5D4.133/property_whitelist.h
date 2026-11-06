@@ -51,6 +51,9 @@ const uint32_t prop_write_allow [] =
 
     /* ISO */
     PROP_ISO,
+
+    /* Shutter */
+    PROP_SHUTTER,
 };
 
 // anything not listed above will allow reads but not writes

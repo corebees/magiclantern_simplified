@@ -4199,7 +4199,11 @@ static struct menu_entry expo_menus[] = {
         .name = "Shutter",
         .update     = shutter_display,
         .select     = shutter_toggle,
+#ifdef CONFIG_5D4
+        .icon_type  = IT_AUTO,
+#else
         .icon_type  = IT_PERCENT,
+#endif
         .help = "Fine-tune shutter value. Displays APEX Tv or degrees equiv.",
         .edit_mode = EM_SHOW_LIVEVIEW,
     },
