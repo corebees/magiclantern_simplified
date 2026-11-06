@@ -69,6 +69,8 @@ const uint32_t prop_write_allow [] =
     PROP_PICSTYLE_SETTINGS_USERDEF1,
     PROP_PICSTYLE_SETTINGS_USERDEF2,
     PROP_PICSTYLE_SETTINGS_USERDEF3,
+    /* SHOOT04: native Canon Bulb Timer, FW 1.3.3 */
+    0x80040060,
 };
 
 // anything not listed above will allow reads but not writes
