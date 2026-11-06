@@ -73,6 +73,18 @@ extern void free(void *buf);
 
 /* not to be called directly (only via macros) */
 extern void *__mem_malloc(size_t len, unsigned int flags, const char *file, unsigned int line);
+
+/*
+ * SHOOT05-R17 experimental persistent allocation.
+ * Exactly AllocateMemory backend, without fallback.
+ * Do not use on hardware until separately validated.
+ */
+extern void *ml_alloc_persistent_am(
+    size_t len,
+    const char *file,
+    unsigned int line
+);
+
 extern void __mem_free(void *buf);
 
 /* flags */

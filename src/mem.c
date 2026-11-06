@@ -927,6 +927,76 @@ static int choose_allocator(int size, unsigned int flags)
 /* these two will replace all malloc calls */
 
 /* returns 0 if it couldn't allocate */
+/*
+ * SHOOT05-R17: experimental fixed-backend allocator.
+ *
+ * AllocateMemory only. No malloc/shoot_malloc/SRM fallback.
+ * Preserve at least 1.5 MiB of free AllocateMemory pool,
+ * plus 1 KiB accounting headroom after allocation.
+ *
+ * This is NOT proof that the pool is safe on the 5D4.
+ */
+void *ml_alloc_persistent_am(
+    size_t size,
+    const char *file,
+    unsigned int line
+)
+{
+    if (!mem_sem || !size || size > 512 * 1024)
+        return NULL;
+
+    take_semaphore(mem_sem, 0);
+
+    void *ptr = NULL;
+
+    /*
+     * The AllocateMemory backend is slot 1 in
+     * the verified R16B allocator table.
+     */
+    const int a = 1;
+
+    if (a >= COUNT(allocators))
+        goto done;
+
+    if (strcmp(allocators[a].name, "AllocateMemory"))
+        goto done;
+
+    const int free_space =
+        GetFreeMemForAllocateMemory();
+
+    const int max_region =
+        GetMaxRegionForAllocateMemory();
+
+    const unsigned int required =
+        (unsigned int)size + 1024U;
+
+    const unsigned int reserve =
+        1536U * 1024U;
+
+    if (
+        free_space <= 0 ||
+        max_region <= 0 ||
+        (unsigned int)free_space <= required + reserve ||
+        (unsigned int)max_region <= required
+    )
+        goto done;
+
+    /*
+     * Use ML memcheck, but force allocator #1.
+     * No automatic backend selection.
+     */
+    ptr = memcheck_malloc(
+        size,file,line,a,0
+    );
+
+    if (ptr)
+        ptr = CACHEABLE(ptr);
+
+done:
+    give_semaphore(mem_sem);
+    return ptr;
+}
+
 void* __mem_malloc(size_t size, unsigned int flags, const char *file, unsigned int line)
 {
 #if defined(CONFIG_INSTALLER)
