@@ -54,6 +54,9 @@ const uint32_t prop_write_allow [] =
 
     /* Shutter */
     PROP_SHUTTER,
+
+    /* Aperture */
+    PROP_APERTURE,
 };
 
 // anything not listed above will allow reads but not writes

@@ -1838,8 +1838,10 @@ aperture_toggle( void* priv, int sign)
 {
     if (!lens_info.lens_exists) return; // only chipped lenses can change aperture
     if (!lens_info.raw_aperture) return;
+#ifndef CONFIG_5D4
     int amin = codes_aperture[1];
     int amax = codes_aperture[COUNT(codes_aperture)-1];
+#endif
     
     int a = lens_info.raw_aperture;
 
@@ -1847,6 +1849,18 @@ aperture_toggle( void* priv, int sign)
     {
         do {
             a += sign;
+#ifdef CONFIG_5D4
+            if (a > lens_info.raw_aperture_max)
+            {
+                a = lens_info.raw_aperture_max;
+                break;
+            }
+            if (a < lens_info.raw_aperture_min)
+            {
+                a = lens_info.raw_aperture_min;
+                break;
+            }
+#else
             if (priv == (void*)-1) // don't wrap around
             {
                 if (a > amax) { a = amax; break; }
@@ -1857,6 +1871,7 @@ aperture_toggle( void* priv, int sign)
                 if (a > amax) a = amin;
                 if (a < amin) a = amax;
             }
+#endif
             if (lens_info.raw_aperture_min >= lens_info.raw_aperture_max) break;
         }
         while (a < lens_info.raw_aperture_min || a > lens_info.raw_aperture_max);
@@ -4213,7 +4228,11 @@ static struct menu_entry expo_menus[] = {
         .name = "Aperture",
         .update     = aperture_display,
         .select     = aperture_toggle,
+#ifdef CONFIG_5D4
+        .icon_type  = IT_AUTO,
+#else
         .icon_type  = IT_PERCENT,
+#endif
         .help = "Adjust aperture. Also displays APEX aperture (Av) in stops.",
         .depends_on = DEP_CHIPPED_LENS,
         .edit_mode = EM_SHOW_LIVEVIEW,
