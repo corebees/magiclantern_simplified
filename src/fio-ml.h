@@ -87,7 +87,24 @@ int get_numbered_file_name(const char* pattern, int nmax, char* filename, int ma
 struct fio_dirent;
 
 /** Directory entry returned by FIO_FindFirstEx() */
-#ifdef CONFIG_DIGIC_78X
+#ifdef CONFIG_5D4
+/*
+ * 5D4 FW 1.3.3: hardware probing shows fio_file.name at offset 0x18.
+ * Keep the known DIGIC VI size/timestamp offsets, with 8 extra unknown
+ * bytes before the filename.
+ */
+struct fio_file {
+    uint16_t mode;
+    uint16_t unk_01;
+    uint32_t size;
+    uint32_t timestamp;
+    uint32_t unk_02;
+    uint32_t unk_5d4[2];
+    char name[FIO_MAX_PATH_LENGTH];
+    uint32_t unk_04[4];
+};
+SIZE_CHECK_STRUCT(fio_file, 0x28 + FIO_MAX_PATH_LENGTH);
+#elif defined(CONFIG_DIGIC_78X)
 struct fio_file {
     uint16_t mode;
     uint16_t unk_01;
