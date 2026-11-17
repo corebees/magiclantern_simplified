@@ -3411,7 +3411,1589 @@ extern MENU_UPDATE_FUNC(lcd_release_display);
 
 extern int voice_tags; // beep.c
 
+/* SHOOT05-R2: 5D IV menu-only preview.
+ * These settings are NOT connected to HDR shooting.
+ * No Canon property request is made by this code.
+ */
+#ifdef CONFIG_5D4
+static CONFIG_INT("s05.preview", s05_preview_enabled, 0);
+static CONFIG_INT("s05.frames", s05_preview_frames, 3);
+static CONFIG_INT("s05.ev8", s05_preview_ev8, 8);
+static CONFIG_INT("s05.sequence", s05_preview_sequence, 1);
+static CONFIG_INT("s05.tv.frame", s05_tv_frame, 1);
+
+/* SHOOT05-AB05: read-only EV sequence calculator.
+ * No Canon property writes and no shutter calls.
+ */
+
+/* SHOOT05-AB05-EV-BEGIN */
+static int s05_preview_make_ev_plan(
+    int frames, int increment_ev8, int mode, int result[12])
+{
+    if (!result || frames < 3 || frames > 12 ||
+        increment_ev8 < 4 || increment_ev8 > 16 ||
+        mode < 0 || mode > 2)
+        return 0;
+
+    int n = 0;
+    result[n++] = 0;
+
+    if (mode == 1)
+    {
+        for (int i = 1; i <= frames / 2; i++)
+        {
+            result[n++] = -increment_ev8 * i;
+
+            if (frames % 2 == 0 && i == frames / 2)
+                break;
+
+            result[n++] = increment_ev8 * i;
+        }
+    }
+    else
+    {
+        int sign = (mode == 2) ? 1 : -1;
+
+        for (int i = 1; i < frames; i++)
+            result[n++] = sign * increment_ev8 * i;
+    }
+
+    return (n == frames) ? n : 0;
+}
+/* SHOOT05-AB05-EV-END */
+
+/* SHOOT05-AB09-TV-BEGIN */
+#define S05_PREVIEW_SLOWEST_TV_RAW 16
+
+/* Return 1=valid, -1=too slow, 2=too fast, 0=invalid.
+ * No Canon property requests or shutter operations.
+ */
+static int s05_preview_tv_raw(
+    int base_raw, int ev8, int fastest_raw, int *out)
+{
+    if (!out ||
+        fastest_raw < S05_PREVIEW_SLOWEST_TV_RAW ||
+        base_raw < S05_PREVIEW_SLOWEST_TV_RAW ||
+        base_raw > fastest_raw)
+        return 0;
+
+    int tv = base_raw - ev8;
+
+    if (tv < S05_PREVIEW_SLOWEST_TV_RAW)
+        return -1;
+
+    if (tv > fastest_raw)
+        return 2;
+
+    *out = tv;
+    return 1;
+}
+/* SHOOT05-AB09-TV-END */
+
+/* SHOOT05-AB13: diagnostic-only Tv preview.
+ * lens_info is a cached ML readout, not a verified
+ * independent Canon property measurement.
+ */
+static MENU_UPDATE_FUNC(s05_tv_display)
+{
+    int ev8[12] = {0};
+
+    int count = s05_preview_make_ev_plan(
+        s05_preview_frames,
+        s05_preview_ev8,
+        s05_preview_sequence,
+        ev8
+    );
+
+    int base_raw = lens_info.raw_shutter;
+    char base_text[16];
+
+    snprintf(
+        base_text, sizeof(base_text), "%s",
+        lens_format_shutter(base_raw)
+    );
+
+    if (!s05_preview_enabled)
+    {
+        MENU_SET_VALUE("Preview OFF");
+        MENU_SET_WARNING(
+            MENU_WARN_INFO,
+            "ML cache Tv: %s (raw=%d). Preview OFF.",
+            base_text, base_raw
+        );
+        return;
+    }
+
+    if (!count)
+    {
+        MENU_SET_VALUE("Invalid EV plan");
+        return;
+    }
+
+    int frame = s05_tv_frame;
+
+    if (frame < 1 || frame > count)
+    {
+        MENU_SET_VALUE("Frame out of range");
+        MENU_SET_WARNING(
+            MENU_WARN_ADVICE,
+            "Select frame 1 to %d.", count
+        );
+        return;
+    }
+
+    if (shooting_mode != SHOOTMODE_M ||
+        is_movie_mode() || is_bulb_mode())
+    {
+        MENU_SET_VALUE("M photo mode only");
+        MENU_SET_WARNING(
+            MENU_WARN_ADVICE,
+            "M photo mode required; no Bulb."
+        );
+        return;
+    }
+
+    if (!lens_info.raw_iso)
+    {
+        MENU_SET_VALUE("Manual ISO required");
+        MENU_SET_WARNING(
+            MENU_WARN_ADVICE,
+            "Check ISO setting before Tv preview."
+        );
+        return;
+    }
+
+    int ev = ev8[frame - 1];
+    int target_raw = base_raw - ev;
+    int tv = 0;
+
+    int status = s05_preview_tv_raw(
+        base_raw,
+        ev,
+        FASTEST_SHUTTER_SPEED_RAW,
+        &tv
+    );
+
+    if (status == -1)
+    {
+        MENU_SET_VALUE("F%d/%d: TV LIMIT", frame, count);
+        MENU_SET_WARNING(
+            MENU_WARN_ADVICE,
+            "ML raw %d -> %d: slower than 30s.",
+            base_raw, target_raw
+        );
+        return;
+    }
+
+    if (status == 2)
+    {
+        MENU_SET_VALUE("F%d/%d: TV LIMIT", frame, count);
+        MENU_SET_WARNING(
+            MENU_WARN_ADVICE,
+            "ML raw %d -> %d: faster than 1/8000s.",
+            base_raw, target_raw
+        );
+        return;
+    }
+
+    if (status != 1)
+    {
+        MENU_SET_VALUE("F%d/%d: NO TV", frame, count);
+        MENU_SET_WARNING(
+            MENU_WARN_ADVICE,
+            "ML cache raw=%d invalid; compare Canon.",
+            base_raw
+        );
+        return;
+    }
+
+    /* lens_format_shutter uses a static buffer:
+     * copy the base label before formatting target Tv.
+     */
+    MENU_SET_VALUE(
+        "F%d/%d: %s",
+        frame, count, lens_format_shutter(tv)
+    );
+
+    int a = ev < 0 ? -ev : ev;
+
+    MENU_SET_WARNING(
+        MENU_WARN_INFO,
+        "ML base %s raw=%d; EV %s%d.%03d; target raw=%d",
+        base_text, base_raw,
+        ev < 0 ? "-" : (ev > 0 ? "+" : ""),
+        a / 8, (a % 8) * 125, tv
+    );
+}
+
+
+/* SHOOT05-AB19-GATE-BEGIN */
+#define S05_GATE_OFF      (-1)
+#define S05_GATE_MODE     (-2)
+#define S05_GATE_ISO      (-3)
+#define S05_GATE_HDR      (-4)
+#define S05_GATE_AEB      (-5)
+#define S05_GATE_INTERVAL (-6)
+#define S05_GATE_DRIVE    (-7)
+#define S05_GATE_BUSY     (-8)
+#define S05_GATE_PLAN     (-9)
+#define S05_GATE_TV       (-10)
+
+typedef struct {
+    int preview_on;
+    int manual_photo;
+    int fixed_iso;
+    int hdr_off;
+    int aeb_off;
+    int interval_off;
+    int single_drive;
+    int idle;
+    int base_raw;
+} s05_gate_state;
+
+static int s05_gate_preflight(
+    const s05_gate_state *g,
+    int frames, int step, int sequence,
+    int output[12])
+{
+    if (!g || !output)
+        return S05_GATE_PLAN;
+
+    if (!g->preview_on)
+        return S05_GATE_OFF;
+    if (!g->manual_photo)
+        return S05_GATE_MODE;
+    if (!g->fixed_iso)
+        return S05_GATE_ISO;
+    if (!g->hdr_off)
+        return S05_GATE_HDR;
+    if (!g->aeb_off)
+        return S05_GATE_AEB;
+    if (!g->interval_off)
+        return S05_GATE_INTERVAL;
+    if (!g->single_drive)
+        return S05_GATE_DRIVE;
+    if (!g->idle)
+        return S05_GATE_BUSY;
+
+    int ev8[12] = {0};
+    int staged[12] = {0};
+
+    int count = s05_preview_make_ev_plan(
+        frames, step, sequence, ev8
+    );
+
+    if (count != frames || count < 3)
+        return S05_GATE_PLAN;
+
+    for (int i = 0; i < count; i++)
+    {
+        int raw = 0;
+
+        if (s05_preview_tv_raw(
+            g->base_raw, ev8[i], 160, &raw
+        ) != 1)
+            return S05_GATE_TV;
+
+        staged[i] = raw;
+    }
+
+    /* Publish no partial plan on failure. */
+    for (int i = 0; i < count; i++)
+        output[i] = staged[i];
+
+    return count;
+}
+/* SHOOT05-AB19-GATE-END */
+
+/* SHOOT05-AB34-RO-FSM-BEGIN */
+#if defined(CONFIG_5D4)
+
+/*
+ * Dormant, pure dry-run controller.
+ * No menu hookup, device I/O or hardware action.
+ */
+enum {
+    S05_AB34_IDLE = 0,
+    S05_AB34_READY = 1,
+    S05_AB34_DONE = 2,
+    S05_AB34_BLOCKED = 3,
+    S05_AB34_CANCELLED = 4
+};
+
+typedef struct {
+    int state;
+    int frames;
+    int next;
+    int ev8;
+    int sequence;
+    int targets[12];
+} s05_ab34_ro_engine;
+
+static int __attribute__((used)) s05_ab34_ro_prepare(
+    s05_ab34_ro_engine *e, s05_gate_state *gate,
+    int frames, int ev8, int sequence)
+{
+    int local[12] = {0};
+    int count;
+
+    if (!e) return 0;
+
+    e->state = S05_AB34_BLOCKED;
+    e->frames = 0;
+    e->next = 0;
+
+    if (!gate || frames < 1 || frames > 12)
+        return 0;
+
+    count = s05_gate_preflight(
+        gate, frames, ev8, sequence, local);
+
+    if (count != frames)
+        return 0;
+
+    for (int i = 0; i < frames; i++)
+        e->targets[i] = local[i];
+
+    e->frames = frames;
+    e->ev8 = ev8;
+    e->sequence = sequence;
+    e->state = S05_AB34_READY;
+
+    return 1;
+}
+
+/*
+ * One symbolic plan iteration.
+ * Returned Tv is never applied to hardware.
+ */
+static int __attribute__((used)) s05_ab34_ro_step(
+    s05_ab34_ro_engine *e,
+    s05_gate_state *gate,
+    int *target)
+{
+    int live[12] = {0};
+    int count;
+
+    if (!e)
+        return -1;
+
+    if (!gate || !target)
+    {
+        if (e->state == S05_AB34_READY)
+            e->state = S05_AB34_BLOCKED;
+        return -1;
+    }
+
+    if (e->state != S05_AB34_READY)
+        return -1;
+
+    count = s05_gate_preflight(
+        gate, e->frames, e->ev8,
+        e->sequence, live);
+
+    if (count != e->frames)
+    {
+        e->state = S05_AB34_BLOCKED;
+        return -2;
+    }
+
+    for (int i = 0; i < count; i++)
+    {
+        if (live[i] != e->targets[i])
+        {
+            e->state = S05_AB34_BLOCKED;
+            return -2;
+        }
+    }
+
+    if (e->next < 0 || e->next >= e->frames)
+    {
+        e->state = S05_AB34_BLOCKED;
+        return -2;
+    }
+
+    *target = e->targets[e->next++];
+
+    if (e->next == e->frames)
+        e->state = S05_AB34_DONE;
+
+    return 1;
+}
+
+static int __attribute__((used)) s05_ab34_ro_cancel(
+    s05_ab34_ro_engine *e)
+{
+    if (!e || e->state != S05_AB34_READY)
+        return 0;
+
+    e->state = S05_AB34_CANCELLED;
+    return 1;
+}
+#endif
+/* SHOOT05-AB34-RO-FSM-END */
+
+
+/* AB19: read-only runtime gate diagnostics.
+ * "PLAN OK" never authorizes image capture.
+ * Some 5D4 state semantics require hardware testing.
+ */
+
+
+/* SHOOT05-AB24-RO-TELEMETRY-BEGIN
+ *
+ * Read state only. No configuration writes,
+ * shutter release, or capture authorization.
+ */
+static MENU_UPDATE_FUNC(s05_hdr_flags_ro)
+{
+    MENU_SET_VALUE(
+        "H:%d A:%d",
+        !!hdr_enabled,
+        !!aeb_setting
+    );
+    MENU_SET_WARNING(
+        MENU_WARN_INFO,
+        "H=ML HDR, A=Canon AEB. Read-only."
+    );
+}
+
+static MENU_UPDATE_FUNC(s05_interval_flags_ro)
+{
+    MENU_SET_VALUE(
+        "E:%d R:%d T:%d",
+        !!interval_enabled,
+        !!intervalometer_running,
+        interval_trigger
+    );
+    MENU_SET_WARNING(
+        MENU_WARN_INFO,
+        "E=enabled, R=running, T=trigger. Read-only."
+    );
+}
+
+static MENU_UPDATE_FUNC(s05_busy_flags_ro)
+{
+    extern int ml_taking_pic;
+
+    MENU_SET_VALUE(
+        "M:%d J:%d H:%d",
+        !!ml_taking_pic,
+        !!lens_info.job_state,
+        !!get_halfshutter_pressed()
+    );
+    MENU_SET_WARNING(
+        MENU_WARN_INFO,
+        "M=ML capture, J=Canon job, H=half shutter."
+    );
+}
+/* SHOOT05-AB24-RO-TELEMETRY-END */
+
+static MENU_UPDATE_FUNC(s05_gate_display)
+{
+    extern int ml_taking_pic;
+
+    s05_gate_state g = {
+        .preview_on = s05_preview_enabled,
+        .manual_photo =
+            shooting_mode == SHOOTMODE_M &&
+            !is_movie_mode() && !is_bulb_mode(),
+        .fixed_iso = lens_info.raw_iso != 0,
+        .hdr_off = hdr_enabled == 0,
+        .aeb_off = aeb_setting == 0,
+        .interval_off =
+            !interval_enabled && !intervalometer_running,
+        .single_drive = drive_mode == DRIVE_SINGLE,
+        .idle =
+            !ml_taking_pic &&
+            !lens_info.job_state &&
+            !get_halfshutter_pressed(),
+        .base_raw = lens_info.raw_shutter
+    };
+
+    int target[12] = {0};
+
+    int result = s05_gate_preflight(
+        &g,
+        s05_preview_frames,
+        s05_preview_ev8,
+        s05_preview_sequence,
+        target
+    );
+
+    if (result > 0)
+    {
+        MENU_SET_VALUE("PLAN OK (RO)");
+        MENU_SET_WARNING(
+            MENU_WARN_INFO,
+            "%d Tv values in range. Read-only; no capture.",
+            result
+        );
+        return;
+    }
+
+    const char *reason = "UNKNOWN";
+
+    switch (result)
+    {
+        case S05_GATE_OFF:      reason = "PREVIEW OFF"; break;
+        case S05_GATE_MODE:     reason = "MODE"; break;
+        case S05_GATE_ISO:      reason = "ISO"; break;
+        case S05_GATE_HDR:      reason = "HDR"; break;
+        case S05_GATE_AEB:      reason = "AEB"; break;
+        case S05_GATE_INTERVAL: reason = "INTERVAL"; break;
+        case S05_GATE_DRIVE:    reason = "DRIVE"; break;
+        case S05_GATE_BUSY:     reason = "BUSY"; break;
+        case S05_GATE_PLAN:     reason = "PLAN"; break;
+        case S05_GATE_TV:       reason = "TV/RAW"; break;
+    }
+
+    MENU_SET_VALUE("BLOCK: %s", reason);
+    MENU_SET_WARNING(
+        MENU_WARN_ADVICE,
+        "Read-only preflight. Check %s. No capture.",
+        reason
+    );
+}
+
+/* SHOOT05 AB130-R1: numeric EV preview.
+ * Only changes display formatting. No camera writes.
+ */
+static MENU_UPDATE_FUNC(s05_preview_sequence_update)
+{
+    int ev8[12] = {0};
+    int count = s05_preview_make_ev_plan(
+        s05_preview_frames,
+        s05_preview_ev8,
+        s05_preview_sequence,
+        ev8
+    );
+
+    if (count < 3 || count > 12 ||
+        count != s05_preview_frames)
+    {
+        MENU_SET_VALUE("INVALID PLAN");
+        return;
+    }
+
+    char first[128] = {0};
+    char second[128] = {0};
+    int used[2] = {0, 0};
+
+    for (int i = 0; i < count; i++)
+    {
+        int v = ev8[i];
+        int magnitude = v < 0 ? -v : v;
+        char item[24];
+
+        snprintf(
+            item, sizeof(item),
+            "%s%d.%03d",
+            v < 0 ? "-" : (v > 0 ? "+" : ""),
+            magnitude / 8,
+            (magnitude % 8) * 125
+        );
+
+        /* Strip unnecessary trailing decimal zeros. */
+        char *dot = strchr(item, '.');
+        if (dot)
+        {
+            int n = strlen(item);
+            while (n > (int)(dot - item) + 1 &&
+                   item[n - 1] == '0')
+                item[--n] = '\0';
+
+            if (n == (int)(dot - item) + 1)
+                item[n - 1] = '\0';
+        }
+
+        int group = i < 6 ? 0 : 1;
+        char *dst = group ? second : first;
+        int left = 128 - used[group];
+
+        int written = snprintf(
+            dst + used[group], left,
+            "%s%s", used[group] ? " " : "", item
+        );
+
+        if (written < 0 || written >= left)
+        {
+            MENU_SET_VALUE("PLAN TOO LONG");
+            return;
+        }
+
+        used[group] += written;
+    }
+
+    MENU_SET_VALUE("%s", first);
+
+    if (count > 6)
+        MENU_SET_WARNING(
+            MENU_WARN_INFO,
+            "Frames 7-%d/%d: %s", count, count, second
+        );
+    else
+        MENU_SET_WARNING(
+            MENU_WARN_INFO,
+            "%d frames, numerical EV offsets. Preview only.",
+            count
+        );
+}
+
+static MENU_UPDATE_FUNC(s05_preview_display)
+{
+    int ev8[12] = {0};
+
+    int count = s05_preview_make_ev_plan(
+        s05_preview_frames,
+        s05_preview_ev8,
+        s05_preview_sequence,
+        ev8
+    );
+
+    if (!count)
+    {
+        MENU_SET_VALUE("INVALID PREVIEW");
+        MENU_SET_WARNING(
+            MENU_WARN_NOT_WORKING,
+            "Invalid EV plan. No shooting."
+        );
+        return;
+    }
+
+    /* AB13: avoid overlapping the long menu name. */
+    MENU_SET_VALUE(
+        "%s", s05_preview_enabled ? "ON" : "OFF"
+    );
+
+    if (!s05_preview_enabled)
+    {
+        MENU_SET_WARNING(
+            MENU_WARN_INFO,
+            "Preview OFF. No automatic shooting."
+        );
+        return;
+    }
+
+    char preview[192] = {0};
+    int pos = 0;
+
+    for (int i = 0; i < count; i++)
+    {
+        int v = ev8[i];
+        int a = v < 0 ? -v : v;
+        int left = (int)sizeof(preview) - pos;
+
+        if (left <= 1)
+            break;
+
+        int written = snprintf(
+            preview + pos,
+            left,
+            "%s%s%d.%03d",
+            i ? " " : "",
+            v < 0 ? "-" : (v > 0 ? "+" : ""),
+            a / 8,
+            (a % 8) * 125
+        );
+
+        if (written < 0 || written >= left)
+            break;
+
+        pos += written;
+    }
+
+    MENU_SET_WARNING(
+        MENU_WARN_INFO,
+        "EV: %s (PREVIEW ONLY; NO SHOTS)",
+        preview
+    );
+}
+#endif
+
+
+/* SHOOT05-AB48-SYMBOLIC-UI-BEGIN */
+#ifdef CONFIG_5D4
+
+static s05_ab34_ro_engine s05_ab48_engine;
+static int s05_ab48_last_rc = 0;
+static int s05_ab48_last_tv = 0;
+
+/* Same read-only state fields as AB19 preflight. */
+static s05_gate_state s05_ab48_gate_snapshot(void)
+{
+    extern int ml_taking_pic;
+    s05_gate_state g = {
+        .preview_on = s05_preview_enabled,
+        .manual_photo =
+            shooting_mode == SHOOTMODE_M &&
+            !is_movie_mode() && !is_bulb_mode(),
+        .fixed_iso = lens_info.raw_iso != 0,
+        .hdr_off = hdr_enabled == 0,
+        .aeb_off = aeb_setting == 0,
+        .interval_off =
+            !interval_enabled && !intervalometer_running,
+        .single_drive = drive_mode == DRIVE_SINGLE,
+        .idle =
+            !ml_taking_pic &&
+            !lens_info.job_state &&
+            !get_halfshutter_pressed(),
+        .base_raw = lens_info.raw_shutter
+    };
+    return g;
+}
+
+/* Called only by an explicit menu selection. */
+static MENU_SELECT_FUNC(s05_ab48_prepare_select)
+{
+    if (!delta) return;
+
+    s05_gate_state g = s05_ab48_gate_snapshot();
+    s05_ab48_last_tv = 0;
+
+    s05_ab48_last_rc =
+        s05_ab34_ro_prepare(
+            &s05_ab48_engine,
+            &g,
+            s05_preview_frames,
+            s05_preview_ev8,
+            s05_preview_sequence
+        ) ? 1 : -1;
+}
+
+/* One explicit symbolic step; never apply Tv. */
+static MENU_SELECT_FUNC(s05_ab48_step_select)
+{
+    if (!delta) return;
+
+    s05_gate_state g = s05_ab48_gate_snapshot();
+    int tv = 0;
+
+    s05_ab48_last_rc =
+        s05_ab34_ro_step(
+            &s05_ab48_engine, &g, &tv
+        );
+
+    if (s05_ab48_last_rc == 1)
+        s05_ab48_last_tv = tv;
+}
+
+
+/* AB74-R1: symbolic run only; no camera I/O. */
+static MENU_SELECT_FUNC(s05_ab48_run_dry_select)
+{
+    if (!delta) return;
+
+    s05_gate_state g = s05_ab48_gate_snapshot();
+
+    s05_ab48_last_tv = 0;
+    s05_ab48_last_rc =
+        s05_ab34_ro_prepare(
+            &s05_ab48_engine,
+            &g,
+            s05_preview_frames,
+            s05_preview_ev8,
+            s05_preview_sequence
+        ) ? 1 : -1;
+
+    if (s05_ab48_last_rc != 1)
+        return;
+
+    for (int i = 0; i < 12; i++)
+    {
+        if (s05_ab48_engine.state == S05_AB34_DONE)
+        {
+            s05_ab48_last_rc = 3;
+            return;
+        }
+
+        if (s05_ab48_engine.state != S05_AB34_READY)
+        {
+            s05_ab48_last_rc = -2;
+            return;
+        }
+
+        g = s05_ab48_gate_snapshot();
+        int tv = 0;
+
+        s05_ab48_last_rc =
+            s05_ab34_ro_step(
+                &s05_ab48_engine, &g, &tv
+            );
+
+        if (s05_ab48_last_rc != 1)
+            return;
+
+        s05_ab48_last_tv = tv;
+    }
+
+    s05_ab48_last_rc =
+        s05_ab48_engine.state == S05_AB34_DONE
+        ? 3 : -3;
+}
+
+
+/* SHOOT05 AB92: three planned Tv steps, no capture.
+ * Restricted to a verified RAW 117 starting point.
+ * No automatic advancement and no automatic retry.
+ */
+static int s05_ab96_raw_seen = 0;
+static int s05_ab96_count = 0;
+static int s05_ab96_candidate[3] = {0};
+static int s05_ab92_armed = 0;
+static int s05_ab92_next = 0;
+static int s05_ab92_failed = 0;
+static int s05_ab92_restore_attempted = 0;
+static int s05_ab92_base = 0;
+static int s05_ab92_plan[3] = {0};
+static int s05_ab92_sequence = 0;
+static int s05_ab92_target = 0;
+static int s05_ab92_observed = 0;
+static int s05_ab92_ack = 0;
+static int s05_ab92_restored = 0;
+static int s05_ab92_restore_ack = 0;
+static int s05_ab92_rc = 0;
+
+static int s05_ab92_gate_ok(const s05_gate_state *g)
+{
+    return g &&
+        g->preview_on &&
+        g->manual_photo &&
+        g->fixed_iso &&
+        g->hdr_off &&
+        g->aeb_off &&
+        g->interval_off &&
+        g->single_drive &&
+        g->idle &&
+        !ml_shutdown_requested;
+}
+
+/*
+ * SHOOT05 AB131-B1-R1: three still photographs.
+ * Experimental; one run per boot; no automatic retries.
+ */
+static volatile int s05_ab131_used = 0;
+static volatile int s05_ab131_state = 0;
+static volatile int s05_ab131_rc = 0;
+static volatile int s05_ab131_shots = 0;
+static volatile int s05_ab131_target = 0;
+static volatile int s05_ab131_observed = 0;
+static volatile int s05_ab131_ack = 0;
+static volatile int s05_ab131_restore_ack = 0;
+static volatile int s05_ab131_restore_raw = 0;
+static volatile int s05_ab131_file0 = 0;
+static volatile int s05_ab131_file1 = 0;
+
+int take_a_pic(int should_af);
+
+static int s05_ab131_idle(void)
+{
+    extern int ml_taking_pic;
+    return !ml_shutdown_requested &&
+        shooting_mode == SHOOTMODE_M &&
+        !is_movie_mode() && !is_bulb_mode() &&
+        !ml_taking_pic && job_state_ready_to_take_pic() &&
+        !get_halfshutter_pressed();
+}
+
+/* Bounded Canon readiness; no shutter retries. */
+static int s05_ab131_wait_ready(void)
+{
+    for (int n = 0; n < 80; n++)
+    {
+        if (ml_shutdown_requested ||
+            gui_menu_shown() || lv ||
+            shooting_mode != SHOOTMODE_M ||
+            is_movie_mode() || is_bulb_mode())
+            return 0;
+
+        if (s05_ab131_idle())
+        {
+            msleep(100);
+
+            if (s05_ab131_idle())
+                return 1;
+        }
+
+        msleep(50);
+    }
+
+    return 0;
+}
+
+static int s05_ab131_gate(int expected_raw)
+{
+    s05_gate_state g = s05_ab48_gate_snapshot();
+    int targets[12] = {0};
+
+    /* Local override: manual Tv gate unchanged. */
+    g.idle = s05_ab131_idle();
+
+    if (s05_ab92_armed ||
+        !s05_ab92_gate_ok(&g) ||
+        !s05_ab131_idle() ||
+        lv || s05_preview_frames != 3 ||
+        s05_preview_ev8 != 8 ||
+        s05_preview_sequence != 1 ||
+        g.base_raw != expected_raw)
+        return 0;
+
+    /* Recalculate exactly the proven three-step plan. */
+    g.base_raw = 117;
+    int n = s05_gate_preflight(
+        &g, 3, 8, 1, targets
+    );
+
+    return n == 3 &&
+        targets[0] == 117 &&
+        targets[1] == 125 &&
+        targets[2] == 109;
+}
+
+static void s05_ab131_worker(void)
+{
+    const int targets[3] = {117, 125, 109};
+    int restore_needed = 0;
+
+    s05_ab131_state = 1;
+
+    /* Never release the shutter inside ML menu. */
+    for (int i = 0; i < 200; i++)
+    {
+        if (ml_shutdown_requested)
+        {
+            s05_ab131_rc = -1;
+            goto finish;
+        }
+        if (!gui_menu_shown())
+            break;
+        msleep(100);
+    }
+
+    if (gui_menu_shown())
+    {
+        s05_ab131_rc = -2;
+        goto finish;
+    }
+
+    msleep(500);
+
+    if (!s05_ab131_gate(117))
+    {
+        s05_ab131_rc = -3;
+        goto finish;
+    }
+
+    /* Preflight passed: rc now records the outcome. */
+    s05_ab131_rc = 0;
+    restore_needed = 1;
+
+    for (int i = 0; i < 3; i++)
+    {
+        int previous = i ? targets[i - 1] : 117;
+        int target = targets[i];
+
+        if (gui_menu_shown() ||
+            !s05_ab131_gate(previous))
+        {
+            s05_ab131_rc = -4;
+            goto restore;
+        }
+
+        s05_ab131_state = 10 + i;
+        s05_ab131_target = target;
+
+        if (target == previous)
+            s05_ab131_ack = -1;
+        else
+            s05_ab131_ack = prop_request_change_wait(
+                PROP_SHUTTER, &target, 4, 100
+            );
+
+        s05_ab131_observed = lens_info.raw_shutter;
+
+        if ((target != previous && !s05_ab131_ack) ||
+            s05_ab131_observed != target)
+        {
+            s05_ab131_rc = -5;
+            goto restore;
+        }
+
+        if (gui_menu_shown() ||
+            !s05_ab131_gate(target))
+        {
+            s05_ab131_rc = -6;
+            goto restore;
+        }
+
+        int before_file =
+            get_shooting_card()->file_number;
+
+        s05_ab131_file0 = before_file;
+        s05_ab131_file1 = before_file;
+
+        s05_ab131_state = 20 + i;
+        int result = take_a_pic(AF_DONT_CHANGE);
+
+        int after_file =
+            get_shooting_card()->file_number;
+
+        for (int n = 0;
+             n < 20 && after_file == before_file;
+             n++)
+        {
+            if (ml_shutdown_requested)
+                break;
+            msleep(100);
+            after_file =
+                get_shooting_card()->file_number;
+        }
+
+        s05_ab131_file1 = after_file;
+        s05_ab131_observed = lens_info.raw_shutter;
+
+        if (result)
+        {
+            s05_ab131_rc = -71;
+            goto restore;
+        }
+
+        if (after_file != before_file + 1)
+        {
+            s05_ab131_rc = -72;
+            goto restore;
+        }
+
+        if (s05_ab131_observed != target)
+        {
+            s05_ab131_rc = -73;
+            goto restore;
+        }
+
+        if (!s05_ab131_wait_ready())
+        {
+            s05_ab131_rc = -74;
+            goto restore;
+        }
+
+        if (!s05_ab131_gate(target))
+        {
+            s05_ab131_rc = -75;
+            goto restore;
+        }
+
+        s05_ab131_shots = i + 1;
+        s05_ab131_state = 30 + i;
+
+        if (i < 2)
+            msleep(250);
+    }
+
+restore:
+    if (restore_needed)
+    {
+        s05_ab131_state = 40;
+        s05_ab131_restore_raw = lens_info.raw_shutter;
+
+        if (s05_ab131_restore_raw == 117)
+        {
+            /* Already at original Tv; no property write. */
+            s05_ab131_restore_ack = -1;
+        }
+        else if (s05_ab131_wait_ready())
+        {
+            int original = 117;
+
+            s05_ab131_restore_ack =
+                prop_request_change_wait(
+                    PROP_SHUTTER, &original, 4, 100
+                );
+
+            s05_ab131_restore_raw =
+                lens_info.raw_shutter;
+
+            if (!s05_ab131_restore_ack ||
+                s05_ab131_restore_raw != original)
+            {
+                if (!s05_ab131_rc)
+                    s05_ab131_rc = -8;
+            }
+        }
+        else
+        {
+            /* Unsafe: leave Tv unchanged. */
+            s05_ab131_restore_ack = -2;
+
+            if (!s05_ab131_rc)
+                s05_ab131_rc = -9;
+        }
+    }
+
+finish:
+    s05_ab131_state = 50;
+    if (!s05_ab131_rc &&
+        s05_ab131_shots == 3 &&
+        s05_ab131_restore_ack > 0 &&
+        s05_ab131_restore_raw == 117)
+        s05_ab131_rc = 10;
+}
+
+static MENU_SELECT_FUNC(s05_ab131_capture_select)
+{
+    if (!delta || s05_ab131_used)
+        return;
+
+    if (!s05_ab131_gate(117))
+    {
+        s05_ab131_rc = -3;
+        return;
+    }
+
+    s05_ab131_used = 1;
+    s05_ab131_state = 1;
+    s05_ab131_rc = 1;
+    s05_ab131_shots = 0;
+
+    task_create(
+        "s05_capture3", 0x1c, 0x4000,
+        s05_ab131_worker, 0
+    );
+}
+
+static MENU_UPDATE_FUNC(s05_ab131_status_update)
+{
+    MENU_SET_VALUE(
+        "%d/3 rc:%d",
+        s05_ab131_shots, s05_ab131_rc
+    );
+    MENU_SET_WARNING(
+        MENU_WARN_INFO,
+        "S:%d Tv:%d/%d A:%d F:%d>%d R:%d/%d",
+        s05_ab131_state,
+        s05_ab131_target,
+        s05_ab131_observed,
+        s05_ab131_ack,
+        s05_ab131_file0,
+        s05_ab131_file1,
+        s05_ab131_restore_ack,
+        s05_ab131_restore_raw
+    );
+}
+
+static MENU_SELECT_FUNC(s05_ab92_arm_select)
+{
+    if (!delta || s05_ab92_armed)
+        return;
+
+    s05_gate_state g = s05_ab48_gate_snapshot();
+    int targets[12] = {0};
+
+    s05_ab96_raw_seen = g.base_raw;
+    s05_ab96_count = 0;
+    for (int i = 0; i < 3; i++)
+        s05_ab96_candidate[i] = 0;
+
+    if (!s05_ab92_gate_ok(&g) ||
+        s05_preview_frames != 3 ||
+        s05_preview_ev8 != 8)
+    {
+        s05_ab92_rc = -1;
+        return;
+    }
+
+    /* The middle sequence choice is 0 - + -- ++. */
+    if (s05_preview_sequence != 1)
+    {
+        s05_ab92_rc = -9;
+        return;
+    }
+
+    if (g.base_raw != 117)
+    {
+        s05_ab92_rc = -2;
+        return;
+    }
+
+    int count = s05_gate_preflight(
+        &g, s05_preview_frames,
+        s05_preview_ev8,
+        s05_preview_sequence, targets
+    );
+
+    s05_ab96_count = count;
+    for (int i = 0; i < 3; i++)
+        s05_ab96_candidate[i] = targets[i];
+
+    if (count != 3 ||
+        targets[0] != 117 ||
+        targets[1] != 125 ||
+        targets[2] != 109)
+    {
+        s05_ab92_rc = -3;
+        return;
+    }
+
+    s05_ab92_base = g.base_raw;
+    s05_ab92_sequence = s05_preview_sequence;
+
+    for (int i = 0; i < 3; i++)
+        s05_ab92_plan[i] = targets[i];
+
+    s05_ab92_next = 0;
+    s05_ab92_target = 0;
+    s05_ab92_observed = g.base_raw;
+    s05_ab92_ack = -1;
+    s05_ab92_armed = 1;
+    s05_ab92_rc = 1;
+}
+
+static MENU_SELECT_FUNC(s05_ab92_next_select)
+{
+    if (!delta ||
+        !s05_ab92_armed ||
+        s05_ab92_failed ||
+        s05_ab92_restore_attempted ||
+        s05_ab92_next >= 3)
+        return;
+
+    if (streq(get_current_task_name(), "PropMgr"))
+    {
+        s05_ab92_failed = 1;
+        s05_ab92_rc = -4;
+        return;
+    }
+
+    s05_gate_state g = s05_ab48_gate_snapshot();
+
+    int expected_previous =
+        s05_ab92_next == 0
+        ? s05_ab92_base
+        : s05_ab92_plan[s05_ab92_next - 1];
+
+    if (!s05_ab92_gate_ok(&g) ||
+        s05_preview_frames != 3 ||
+        s05_preview_ev8 != 8 ||
+        s05_preview_sequence != s05_ab92_sequence ||
+        g.base_raw != expected_previous)
+    {
+        s05_ab92_failed = 1;
+        s05_ab92_rc = -5;
+        return;
+    }
+
+    int index = s05_ab92_next;
+    int target = s05_ab92_plan[index];
+
+    /* Latch this step before issuing any property request. */
+    s05_ab92_next = index + 1;
+    s05_ab92_target = target;
+
+    if (target == g.base_raw)
+    {
+        /* Frame zero: already at the requested Tv. */
+        s05_ab92_ack = -1;
+    }
+    else
+    {
+        s05_ab92_ack = prop_request_change_wait(
+            PROP_SHUTTER, &target, 4, 100
+        );
+    }
+
+    s05_ab92_observed = lens_info.raw_shutter;
+
+    if ((target != g.base_raw && !s05_ab92_ack) ||
+        s05_ab92_observed != target)
+    {
+        s05_ab92_failed = 1;
+        s05_ab92_rc = -6;
+        return;
+    }
+
+    s05_ab92_rc = s05_ab92_next;
+}
+
+static MENU_SELECT_FUNC(s05_ab92_restore_select)
+{
+    extern int ml_taking_pic;
+
+    if (!delta ||
+        !s05_ab92_armed ||
+        s05_ab92_restore_attempted)
+        return;
+
+    if (ml_shutdown_requested ||
+        streq(get_current_task_name(), "PropMgr") ||
+        shooting_mode != SHOOTMODE_M ||
+        is_movie_mode() ||
+        is_bulb_mode() ||
+        ml_taking_pic ||
+        lens_info.job_state ||
+        get_halfshutter_pressed())
+    {
+        s05_ab92_rc = -7;
+        return;
+    }
+
+    /* Exactly one restoration attempt per boot. */
+    s05_ab92_restore_attempted = 1;
+
+    int base = s05_ab92_base;
+
+    s05_ab92_restore_ack = prop_request_change_wait(
+        PROP_SHUTTER, &base, 4, 100
+    );
+
+    s05_ab92_restored = lens_info.raw_shutter;
+
+    if (s05_ab92_restore_ack &&
+        s05_ab92_restored == base)
+    {
+        s05_ab92_rc = 10;
+    }
+    else
+    {
+        s05_ab92_failed = 1;
+        s05_ab92_rc = -8;
+    }
+}
+
+static MENU_UPDATE_FUNC(s05_ab92_status_update)
+{
+    if (!s05_ab92_armed)
+    {
+        MENU_SET_VALUE(
+            "Raw:%d rc:%d",
+            s05_ab96_raw_seen ?
+                s05_ab96_raw_seen : lens_info.raw_shutter,
+            s05_ab92_rc
+        );
+        MENU_SET_WARNING(
+            MENU_WARN_INFO,
+            "Seq:%d count:%d plan:%d/%d/%d",
+            s05_preview_sequence,
+            s05_ab96_count,
+            s05_ab96_candidate[0],
+            s05_ab96_candidate[1],
+            s05_ab96_candidate[2]
+        );
+        return;
+    }
+
+    const char *state =
+        !s05_ab92_armed ? "ARM" :
+        s05_ab92_restore_attempted ? "REBOOT" :
+        s05_ab92_failed ? "STOP" :
+        s05_ab92_next == 3 ? "RESTORE" :
+        "NEXT";
+
+    MENU_SET_VALUE(
+        "Tv %d/3 rc:%d", s05_ab92_next, s05_ab92_rc
+    );
+
+    MENU_SET_WARNING(
+        MENU_WARN_INFO,
+        "%s B:%d T:%d A:%d ack:%d R:%d/%d",
+        state,
+        s05_ab92_base,
+        s05_ab92_target,
+        s05_ab92_observed,
+        s05_ab92_ack,
+        s05_ab92_restored,
+        s05_ab92_restore_ack
+    );
+}
+
+static MENU_UPDATE_FUNC(s05_ab92_targets_update)
+{
+    MENU_SET_VALUE(
+        "%d / %d / %d",
+        s05_ab92_plan[0],
+        s05_ab92_plan[1],
+        s05_ab92_plan[2]
+    );
+
+    MENU_SET_WARNING(
+        MENU_WARN_INFO,
+        "Seq 0 - + -- ++. Canon 1/200, 1/400, 1/100."
+    );
+}
+
+static MENU_SELECT_FUNC(s05_ab48_cancel_select)
+{
+    if (!delta) return;
+
+    s05_ab48_last_rc =
+        s05_ab34_ro_cancel(
+            &s05_ab48_engine
+        ) ? 2 : -1;
+}
+
+/* Rendering has no FSM state transitions. */
+static MENU_UPDATE_FUNC(s05_ab48_status_update)
+{
+    const char *state = "IDLE";
+
+    switch (s05_ab48_engine.state)
+    {
+        case S05_AB34_READY:
+            state = "READY";
+            break;
+        case S05_AB34_DONE:
+            state = "DONE";
+            break;
+        case S05_AB34_BLOCKED:
+            state = "BLOCKED";
+            break;
+        case S05_AB34_CANCELLED:
+            state = "CANCEL";
+            break;
+    }
+
+    int frame = s05_ab48_engine.next;
+    int total = s05_ab48_engine.frames;
+
+    if (total >= 3 && total <= 12 &&
+        frame >= 1 && frame <= total)
+    {
+        int offsets[12] = {0};
+
+        int count = s05_preview_make_ev_plan(
+            total,
+            s05_ab48_engine.ev8,
+            s05_ab48_engine.sequence,
+            offsets
+        );
+
+        if (count == total)
+        {
+            int ev = offsets[frame - 1];
+            int abs_ev = ev < 0 ? -ev : ev;
+            const char *sign =
+                ev < 0 ? "-" : (ev > 0 ? "+" : "");
+
+            MENU_SET_VALUE(
+                "%s %d/%d %s",
+                state, frame, total,
+                lens_format_shutter(
+                    s05_ab48_engine.targets[frame - 1]
+                )
+            );
+
+            MENU_SET_WARNING(
+                MENU_WARN_INFO,
+                "EV: %s%d.%03d; symbolic only; rc=%d",
+                sign,
+                abs_ev / 8,
+                (abs_ev % 8) * 125,
+                s05_ab48_last_rc
+            );
+            return;
+        }
+    }
+
+    MENU_SET_VALUE(
+        "%s %d/%d --",
+        state, frame, total
+    );
+
+    MENU_SET_WARNING(
+        MENU_WARN_INFO,
+        "No applied exposure. Symbolic only; rc=%d",
+        s05_ab48_last_rc
+    );
+}
+#endif
+/* SHOOT05-AB48-SYMBOLIC-UI-END */
+
 static struct menu_entry shoot_menus[] = {
+
+    /* SHOOT05-R2: preview only, no shooting. */
+#ifdef CONFIG_5D4
+    {
+        .name = "Advanced Bracket [PREVIEW]",
+        .priv = &s05_preview_enabled,
+        .max = 1,
+        .update = s05_preview_display,
+        .help = "Menu preview only. Does not take HDR shots.",
+        .submenu_width = 700,
+        .children = (struct menu_entry[]) {
+            {
+                .name = "Frames (preview)",
+                .priv = &s05_preview_frames,
+                .min = 3,
+                .max = 12,
+                .help = "Preview setting only; no shooting.",
+            },
+            {
+                .name = "EV increment (preview)",
+                .priv = &s05_preview_ev8,
+                .min = 4,
+                .max = 16,
+                .choices = CHOICES(
+                    "0.5 EV", "0.625 EV", "0.75 EV",
+                    "0.875 EV", "1 EV", "1.125 EV",
+                    "1.25 EV", "1.375 EV", "1.5 EV",
+                    "1.625 EV", "1.75 EV",
+                    "1.875 EV", "2 EV"
+                ),
+                .help = "Preview EV spacing; no exposure writes.",
+            },
+            {
+                .name = "Sequence (preview)",
+                .priv = &s05_preview_sequence,
+                .max = 2,
+                .choices = CHOICES(
+                    "Negative", "Alternating", "Positive"
+                ),
+                .update = s05_preview_sequence_update,
+                .help = "Dynamic EV order for selected Frames.",
+            },
+
+
+            /* SHOOT05 AB48: manual symbolic FSM only. */
+            {
+                .name = "Tv Plan Arm",
+                .select = s05_ab92_arm_select,
+                .help = "Prepare 0,-,+ EV; RAW 117 only.",
+            },
+            {
+                .name = "Tv Plan Next",
+                .select = s05_ab92_next_select,
+                .help = "Advance ONE Tv step, without shooting.",
+            },
+            {
+                .name = "Tv Plan Restore",
+                .select = s05_ab92_restore_select,
+                .help = "Return to initial Tv; one attempt.",
+            },
+            {
+                .name = "Tv Plan Status",
+                .update = s05_ab92_status_update,
+                .help = "Progress and property acknowledgements.",
+            },
+            {
+                .name = "Tv Plan Targets",
+                .update = s05_ab92_targets_update,
+                .help = "Planned Tv RAW values, no capture.",
+            },
+            {
+                .name = "Capture 3 [TEST]",
+                .select = s05_ab131_capture_select,
+                .help = "0,-,+ EV. Close ML menu to shoot.",
+            },
+            {
+                .name = "Capture Status",
+                .update = s05_ab131_status_update,
+                .help = "Capture and restore diagnostics.",
+            },
+
+            MENU_EOL
+        },
+    },
+#endif
+
+
     #ifdef FEATURE_HDR_BRACKETING
     {
         .name = "Advanced Bracket",
