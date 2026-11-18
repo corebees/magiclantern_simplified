@@ -4660,7 +4660,8 @@ finish:
     s05_ab131_state = 50;
     if (!s05_ab131_rc &&
         s05_ab131_shots == frames &&
-        s05_ab131_restore_ack > 0 &&
+        (s05_ab131_restore_ack > 0 ||
+         s05_ab131_restore_ack == -1) &&
         s05_ab131_restore_raw == run.base_raw)
         s05_ab131_rc = 10;
 
@@ -4671,7 +4672,8 @@ finish:
      */
     if (s05_ab131_rc == 10 &&
         s05_ab131_shots == frames &&
-        s05_ab131_restore_ack > 0 &&
+        (s05_ab131_restore_ack > 0 ||
+         s05_ab131_restore_ack == -1) &&
         s05_ab131_restore_raw == run.base_raw &&
         !ml_shutdown_requested)
     {
@@ -4707,10 +4709,21 @@ static MENU_SELECT_FUNC(s05_ab131_capture_select)
     s05_ab131_restore_ack = 0;
     s05_ab131_restore_raw = planned.base_raw;
 
-    task_create(
+    /*
+     * AB136: DryOS task_create returns an odd value on error.
+     * Keep the latch locked if the worker was not created.
+     */
+    uint32_t task_ret = (uint32_t) task_create(
         "s05_captureN", 0x1c, 0x4000,
         s05_ab131_worker, 0
     );
+
+    if (task_ret & 1)
+    {
+        s05_ab131_state = 50;
+        s05_ab131_rc = -10;
+        /* s05_ab131_used remains 1 until reboot. */
+    }
 }
 
 static MENU_UPDATE_FUNC(s05_ab131_status_update)
