@@ -4007,7 +4007,7 @@ static MENU_UPDATE_FUNC(s05_gate_display)
 
     switch (result)
     {
-        case S05_GATE_OFF:      reason = "PREVIEW OFF"; break;
+        case S05_GATE_OFF:      reason = "DISABLED"; break;
         case S05_GATE_MODE:     reason = "MODE"; break;
         case S05_GATE_ISO:      reason = "ISO"; break;
         case S05_GATE_HDR:      reason = "HDR"; break;
@@ -4106,7 +4106,7 @@ static MENU_UPDATE_FUNC(s05_preview_sequence_update)
     else
         MENU_SET_WARNING(
             MENU_WARN_INFO,
-            "%d frames, numerical EV offsets. Preview only.",
+            "%d frames; EV offsets shown above.",
             count
         );
 }
@@ -4124,7 +4124,7 @@ static MENU_UPDATE_FUNC(s05_preview_display)
 
     if (!count)
     {
-        MENU_SET_VALUE("INVALID PREVIEW");
+        MENU_SET_VALUE("INVALID PLAN");
         MENU_SET_WARNING(
             MENU_WARN_NOT_WORKING,
             "Invalid EV plan. No shooting."
@@ -4141,7 +4141,7 @@ static MENU_UPDATE_FUNC(s05_preview_display)
     {
         MENU_SET_WARNING(
             MENU_WARN_INFO,
-            "Preview OFF. No automatic shooting."
+            "Bracketing disabled. Enable to capture."
         );
         return;
     }
@@ -4176,7 +4176,7 @@ static MENU_UPDATE_FUNC(s05_preview_display)
 
     MENU_SET_WARNING(
         MENU_WARN_INFO,
-        "EV: %s (PREVIEW ONLY; NO SHOTS)",
+        "EV plan: %s",
         preview
     );
 }
@@ -5077,25 +5077,25 @@ static MENU_UPDATE_FUNC(s05_ab48_status_update)
 
 static struct menu_entry shoot_menus[] = {
 
-    /* SHOOT05-R2: preview only, no shooting. */
+    /* SHOOT05: guarded Advanced Bracketing menu. */
 #ifdef CONFIG_5D4
     {
-        .name = "Advanced Bracket [PREVIEW]",
+        .name = "Advanced Bracketing",
         .priv = &s05_preview_enabled,
         .max = 1,
         .update = s05_preview_display,
-        .help = "Menu preview only. Does not take HDR shots.",
+        .help = "Enable guarded exposure bracketing in M mode.",
         .submenu_width = 700,
         .children = (struct menu_entry[]) {
             {
-                .name = "Frames (preview)",
+                .name = "Frames",
                 .priv = &s05_preview_frames,
                 .min = 3,
                 .max = 12,
-                .help = "Preview setting only; no shooting.",
+                .help = "Number of photographs in each sequence.",
             },
             {
-                .name = "EV increment (preview)",
+                .name = "EV increment",
                 .priv = &s05_preview_ev8,
                 .min = 4,
                 .max = 16,
@@ -5106,10 +5106,10 @@ static struct menu_entry shoot_menus[] = {
                     "1.625 EV", "1.75 EV",
                     "1.875 EV", "2 EV"
                 ),
-                .help = "Preview EV spacing; no exposure writes.",
+                .help = "Exposure increment between bracket levels.",
             },
             {
-                .name = "Sequence (preview)",
+                .name = "Sequence",
                 .priv = &s05_preview_sequence,
                 .max = 2,
                 .choices = CHOICES(
@@ -5120,39 +5120,13 @@ static struct menu_entry shoot_menus[] = {
             },
 
 
-            /* SHOOT05 AB48: manual symbolic FSM only. */
             {
-                .name = "Tv Plan Arm",
-                .select = s05_ab92_arm_select,
-                .help = "Prepare 0,-,+ EV; RAW 117 only.",
-            },
-            {
-                .name = "Tv Plan Next",
-                .select = s05_ab92_next_select,
-                .help = "Advance ONE Tv step, without shooting.",
-            },
-            {
-                .name = "Tv Plan Restore",
-                .select = s05_ab92_restore_select,
-                .help = "Return to initial Tv; one attempt.",
-            },
-            {
-                .name = "Tv Plan Status",
-                .update = s05_ab92_status_update,
-                .help = "Progress and property acknowledgements.",
-            },
-            {
-                .name = "Tv Plan Targets",
-                .update = s05_ab92_targets_update,
-                .help = "Planned Tv RAW values, no capture.",
-            },
-            {
-                .name = "Capture [TEST]",
+                .name = "Capture",
                 .select = s05_ab131_capture_select,
-                .help = "0,-,+ EV. Close ML menu to shoot.",
+                .help = "Start the selected bracket after closing the ML menu.",
             },
             {
-                .name = "Capture Status",
+                .name = "Status",
                 .update = s05_ab131_status_update,
                 .help = "Capture and restore diagnostics.",
             },
