@@ -4340,8 +4340,10 @@ static int s05_ab92_gate_ok(const s05_gate_state *g)
 }
 
 /*
- * SHOOT05 AB131-B1-R1: three still photographs.
- * Experimental; one run per boot; no automatic retries.
+ * AB135: guarded repeated capture.
+ * Rearm only after a fully verified successful sequence.
+ * Any worker failure retains the reboot-required latch.
+ * No automatic shutter retries.
  */
 static volatile int s05_ab131_used = 0;
 static volatile int s05_ab131_state = 0;
@@ -4661,6 +4663,20 @@ finish:
         s05_ab131_restore_ack > 0 &&
         s05_ab131_restore_raw == run.base_raw)
         s05_ab131_rc = 10;
+
+    /*
+     * AB135: release the capture latch only on full success.
+     * This is the worker's final operation on shared state.
+     * Failed or incomplete runs remain locked until reboot.
+     */
+    if (s05_ab131_rc == 10 &&
+        s05_ab131_shots == frames &&
+        s05_ab131_restore_ack > 0 &&
+        s05_ab131_restore_raw == run.base_raw &&
+        !ml_shutdown_requested)
+    {
+        s05_ab131_used = 0;
+    }
 }
 
 
@@ -4681,6 +4697,15 @@ static MENU_SELECT_FUNC(s05_ab131_capture_select)
     s05_ab131_state = 1;
     s05_ab131_rc = 1;
     s05_ab131_shots = 0;
+
+    /* AB135: clear stale diagnostics from previous run. */
+    s05_ab131_target = 0;
+    s05_ab131_observed = planned.base_raw;
+    s05_ab131_ack = 0;
+    s05_ab131_file0 = 0;
+    s05_ab131_file1 = 0;
+    s05_ab131_restore_ack = 0;
+    s05_ab131_restore_raw = planned.base_raw;
 
     task_create(
         "s05_captureN", 0x1c, 0x4000,
