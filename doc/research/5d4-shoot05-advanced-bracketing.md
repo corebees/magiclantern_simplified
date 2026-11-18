@@ -70,8 +70,22 @@ SHOOT05-specific functions and menu entries from the AB131-R3 source into
 `src/shoot.c`. Subsequent commits adapt AB133, AB134, AB135, AB136 and UI1 in
 dependency order, with their exact isolated changes inside SHOOT05. Unrelated
 differences in the experimental `src/shoot.c` are excluded. The original
-source's hardware results do not validate this adapted fork build. A fork
-build and physical camera retest remain pending.
+source's hardware results do not validate the adapted fork binary. The
+AB136-UI1 fork build completed in an isolated clone at commit
+`ee03488171e461f3620f0ef7320c280aaf00778d`, with
+`arm-none-eabi-gcc` 13.2.1. The fork `src/shoot.c` SHA-256 was
+`0685c97af83768bd3c6b3890a364c54f169634f921d4f510ead2df67fe9851db`.
+Its `autoexec.bin` is 238464 bytes with SHA-256
+`6c8fe1b2abdb4678e4433a8d2de431263a22d19546b213a48359a32dfb41017c`.
+This differs from the original AB136-UI1 binary because the fork is a
+separate source tree. The user subsequently reported `test hardware pass`
+on the EOS 5D Mark IV FW 1.3.3. The installed SD binary hash, exact test
+sequence, repetitions and per-series diagnostics have not yet been supplied;
+the reported pass is not yet linked by readback to this fork binary. The
+build log is
+`logs/FORK-AB136-UI1-BUILD-20261118-221233.txt` in the SHOOT05 workcard;
+the attached log SHA-256 is
+`2b09aea1b467b34c0834429db1ee2e5ce2bac43ce52a2ce8a1d0831e0dc7f25c`.
 
 The original evidence is in
 `/home/corebee/5D4.133-WORKING/SHOOT05-ADVANCED-BRACKET/`, notably
