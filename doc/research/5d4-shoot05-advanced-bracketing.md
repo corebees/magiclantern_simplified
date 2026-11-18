@@ -1,9 +1,9 @@
 # 5D Mark IV 1.3.3: SHOOT05 experimental bracket capture
 
-This branch ports the isolated SHOOT05 experiment through AB136-R1 from the
+This branch ports the isolated SHOOT05 experiment through AB136-UI1 from the
 original development tree into the upstream-based fork. It is separate from upstream
 `FEATURE_HDR_BRACKETING`, which remains disabled in the 5D4 feature list.
-The menu entry is `Advanced Bracket [PREVIEW]`; its `Capture [TEST]`
+The menu entry is `Advanced Bracketing`; its `Capture`
 child can run a gated sequence after closing the ML menu.
 
 ## Scope
@@ -20,8 +20,10 @@ child can run a gated sequence after closing the ML menu.
   automatic shutter retry.
 - AB136 detects a failed task creation and leaves capture locked. It accepts
   an already-restored Tv only when the observed RAW equals the initial RAW.
-- The dry-run controller and manual Tv Plan entries are retained as
-  dependencies and diagnostics of the exact experimental source.
+- AB136-UI1 removes preview/test wording and the five manual Tv Plan menu
+  commands. The AB136 capture engine and AB92 diagnostic code remain in
+  `src/shoot.c`; the manual AB92 entries are no longer exposed in the menu.
+- The dry-run controller remains as a source dependency and diagnostic.
 
 ## Original camera evidence
 
@@ -51,19 +53,21 @@ general Advanced Bracketing milestone.
 | AB134-R1 | `7b45c609d2d307b090d0df45c249b66c3226493a9680411ffed10c975e48018d` | `52d7ff320c15b28ac319e65101cfc672125881c52501c4945f4d2a1f51a15c98` | 4 frames at 1.25 EV, 10 at 1.625 EV (`rc:10 Q:6`), and 12 at 0.625 EV passed. SD binary identity was not independently verified at checkpoint time. |
 | AB135-R1 | `5f0dc90e77f1b31021bfa3c032c732646a2895d8011acd7c583225f4fb486d64` | `e6382680b34aa9c0fc77dab4e3d67cadf89f8410bf67704fa83a6545221a54fe` | Five consecutive series with varied settings passed, without reboot. Per-series diagnostics were not recorded. |
 | AB136-R1 | `f7a9ba3aec4990a98c22f2e8bec1a3a71feab22cf67d356796f6f6b60ad654c8` | `87cdba425df28ea0daba2616194b88db5bcdc72db04ae3730547e10c7c5a2197` | 3 frames at 1 EV and 5 frames at 1.25 EV passed consecutively, starting at 1/100 s. Exact per-series diagnostics were not transcribed. |
+| AB136-UI1 | `c6597e2ac63668ffd0d25212e1d92b119ad2267f489c38c9867525d3ed02590d` | `a5ef2a1a654a1c98ed75d51c87fcf2f133ad7a0df2bdcd47600d3cd0db2159a2` | User reported a fully positive camera test of the UI cleanup. The attached checkpoint log verifies source, patch and installed build provenance; exact test sequence and per-series diagnostics are not included there. |
 
 These are user-reported tests on the EOS 5D Mark IV firmware 1.3.3 of
 separate isolated builds. No new fork binary was part of those tests.
 For AB136, the task creation failure and already-restored RAW paths were not
 forced on camera. No freeze or Err70 was reported; RTC was not separately
-recorded. The configuration matrix remains incomplete.
+recorded. The AB136-UI1 report does not add detailed freeze, Err70 or RTC
+observations. The configuration matrix remains incomplete.
 
 ## Fork provenance and validation
 
 The original fork adaptation starts from `5d4/port` at
 `ec7ee6a8fc5f5eaf4faee05bdf49dad9eb8c6b92`. It inserts the
 SHOOT05-specific functions and menu entries from the AB131-R3 source into
-`src/shoot.c`. Subsequent commits adapt AB133, AB134, AB135 and AB136 in
+`src/shoot.c`. Subsequent commits adapt AB133, AB134, AB135, AB136 and UI1 in
 dependency order, with their exact isolated changes inside SHOOT05. Unrelated
 differences in the experimental `src/shoot.c` are excluded. The original
 source's hardware results do not validate this adapted fork build. A fork
@@ -81,3 +85,10 @@ Its source is not ported as a separate checkpoint; AB133 implements the
 corrected 3–12-frame path. AB134 and AB135 remain distinct prior checkpoints
 in this branch history. No generated binary, Canon firmware or dump is
 included in the repository. No main promotion, tag or release is planned.
+
+AB136-UI1 patch SHA-256:
+`34fa3d1796f2ac8b5839d573c1079dcdf27ee30611d0cb7315aafa3c256fb974`.
+Its isolated patch and build log is
+`logs/AB136-UI1-PATCH-BUILD-20261118-214420-375929.txt` in the SHOOT05
+workcard. The hardware checkpoint log is
+`logs/AB136-UI1-H1-CHECKPOINT-20261118-215825-375929.txt`.
