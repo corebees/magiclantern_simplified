@@ -4321,38 +4321,79 @@ static int s05_ab131_wait_ready(void)
     return 0;
 }
 
-static int s05_ab131_gate(int expected_raw)
-{
-    s05_gate_state g = s05_ab48_gate_snapshot();
-    int targets[12] = {0};
 
-    /* Local override: manual Tv gate unchanged. */
+/* AB133: automatic capture 3..12; AB92 manual unchanged. */
+typedef struct {
+    int frames, step, sequence, base_raw;
+    int targets[12];
+} s05_ab133_plan;
+
+static s05_ab133_plan s05_ab133_latched;
+static volatile int s05_ab133_total = 0;
+
+static int s05_ab133_gate(const s05_ab133_plan *p, int expected_raw)
+{
+    if (!p || p->frames < 3 || p->frames > 12) return 0;
+
+    s05_gate_state g = s05_ab48_gate_snapshot();
+    int regenerated[12] = {0};
     g.idle = s05_ab131_idle();
 
-    if (s05_ab92_armed ||
-        !s05_ab92_gate_ok(&g) ||
-        !s05_ab131_idle() ||
-        lv || s05_preview_frames != 3 ||
-        s05_preview_ev8 != 8 ||
-        s05_preview_sequence != 1 ||
+    if (s05_ab92_armed || !s05_ab92_gate_ok(&g) ||
+        !s05_ab131_idle() || lv ||
+        s05_preview_frames != p->frames ||
+        s05_preview_ev8 != p->step ||
+        s05_preview_sequence != p->sequence ||
         g.base_raw != expected_raw)
         return 0;
 
-    /* Recalculate exactly the proven three-step plan. */
-    g.base_raw = 117;
-    int n = s05_gate_preflight(
-        &g, 3, 8, 1, targets
-    );
+    g.base_raw = p->base_raw;
+    int count = s05_gate_preflight(
+        &g, p->frames, p->step, p->sequence, regenerated);
 
-    return n == 3 &&
-        targets[0] == 117 &&
-        targets[1] == 125 &&
-        targets[2] == 109;
+    if (count != p->frames) return 0;
+
+    for (int i = 0; i < count; i++)
+        if (regenerated[i] != p->targets[i]) return 0;
+
+    return 1;
+}
+
+static int s05_ab133_prepare(s05_ab133_plan *p)
+{
+    if (!p || s05_preview_frames < 3 || s05_preview_frames > 12)
+        return 0;
+
+    s05_gate_state g = s05_ab48_gate_snapshot();
+    int targets[12] = {0};
+    g.idle = s05_ab131_idle();
+
+    if (s05_ab92_armed || !s05_ab92_gate_ok(&g) ||
+        !s05_ab131_idle() || lv)
+        return 0;
+
+    int count = s05_gate_preflight(
+        &g, s05_preview_frames, s05_preview_ev8,
+        s05_preview_sequence, targets);
+
+    if (count != s05_preview_frames) return 0;
+
+    p->frames = count;
+    p->step = s05_preview_ev8;
+    p->sequence = s05_preview_sequence;
+    p->base_raw = g.base_raw;
+
+    for (int i = 0; i < count; i++)
+        p->targets[i] = targets[i];
+
+    return s05_ab133_gate(p, p->base_raw);
 }
 
 static void s05_ab131_worker(void)
 {
-    const int targets[3] = {117, 125, 109};
+    const s05_ab133_plan run = s05_ab133_latched;
+    const int *targets = run.targets;
+    const int frames = run.frames;
     int restore_needed = 0;
 
     s05_ab131_state = 1;
@@ -4378,7 +4419,7 @@ static void s05_ab131_worker(void)
 
     msleep(500);
 
-    if (!s05_ab131_gate(117))
+    if (!s05_ab133_gate(&run, run.base_raw))
     {
         s05_ab131_rc = -3;
         goto finish;
@@ -4388,13 +4429,13 @@ static void s05_ab131_worker(void)
     s05_ab131_rc = 0;
     restore_needed = 1;
 
-    for (int i = 0; i < 3; i++)
+    for (int i = 0; i < frames; i++)
     {
-        int previous = i ? targets[i - 1] : 117;
+        int previous = i ? targets[i - 1] : run.base_raw;
         int target = targets[i];
 
         if (gui_menu_shown() ||
-            !s05_ab131_gate(previous))
+            !s05_ab133_gate(&run, previous))
         {
             s05_ab131_rc = -4;
             goto restore;
@@ -4420,7 +4461,7 @@ static void s05_ab131_worker(void)
         }
 
         if (gui_menu_shown() ||
-            !s05_ab131_gate(target))
+            !s05_ab133_gate(&run, target))
         {
             s05_ab131_rc = -6;
             goto restore;
@@ -4476,7 +4517,7 @@ static void s05_ab131_worker(void)
             goto restore;
         }
 
-        if (!s05_ab131_gate(target))
+        if (!s05_ab133_gate(&run, target))
         {
             s05_ab131_rc = -75;
             goto restore;
@@ -4485,7 +4526,7 @@ static void s05_ab131_worker(void)
         s05_ab131_shots = i + 1;
         s05_ab131_state = 30 + i;
 
-        if (i < 2)
+        if (i + 1 < frames)
             msleep(250);
     }
 
@@ -4495,14 +4536,14 @@ restore:
         s05_ab131_state = 40;
         s05_ab131_restore_raw = lens_info.raw_shutter;
 
-        if (s05_ab131_restore_raw == 117)
+        if (s05_ab131_restore_raw == run.base_raw)
         {
             /* Already at original Tv; no property write. */
             s05_ab131_restore_ack = -1;
         }
         else if (s05_ab131_wait_ready())
         {
-            int original = 117;
+            int original = run.base_raw;
 
             s05_ab131_restore_ack =
                 prop_request_change_wait(
@@ -4532,30 +4573,33 @@ restore:
 finish:
     s05_ab131_state = 50;
     if (!s05_ab131_rc &&
-        s05_ab131_shots == 3 &&
+        s05_ab131_shots == frames &&
         s05_ab131_restore_ack > 0 &&
-        s05_ab131_restore_raw == 117)
+        s05_ab131_restore_raw == run.base_raw)
         s05_ab131_rc = 10;
 }
 
+
 static MENU_SELECT_FUNC(s05_ab131_capture_select)
 {
-    if (!delta || s05_ab131_used)
-        return;
+    if (!delta || s05_ab131_used) return;
 
-    if (!s05_ab131_gate(117))
+    s05_ab133_plan planned = {0};
+    if (!s05_ab133_prepare(&planned))
     {
         s05_ab131_rc = -3;
         return;
     }
 
+    s05_ab133_latched = planned;
+    s05_ab133_total = planned.frames;
     s05_ab131_used = 1;
     s05_ab131_state = 1;
     s05_ab131_rc = 1;
     s05_ab131_shots = 0;
 
     task_create(
-        "s05_capture3", 0x1c, 0x4000,
+        "s05_captureN", 0x1c, 0x4000,
         s05_ab131_worker, 0
     );
 }
@@ -4563,8 +4607,10 @@ static MENU_SELECT_FUNC(s05_ab131_capture_select)
 static MENU_UPDATE_FUNC(s05_ab131_status_update)
 {
     MENU_SET_VALUE(
-        "%d/3 rc:%d",
-        s05_ab131_shots, s05_ab131_rc
+        "%d/%d rc:%d",
+        s05_ab131_shots,
+        s05_ab133_total ? s05_ab133_total : s05_preview_frames,
+        s05_ab131_rc
     );
     MENU_SET_WARNING(
         MENU_WARN_INFO,
@@ -4978,7 +5024,7 @@ static struct menu_entry shoot_menus[] = {
                 .help = "Planned Tv RAW values, no capture.",
             },
             {
-                .name = "Capture 3 [TEST]",
+                .name = "Capture 5 [TEST]",
                 .select = s05_ab131_capture_select,
                 .help = "0,-,+ EV. Close ML menu to shoot.",
             },
