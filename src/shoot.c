@@ -3889,6 +3889,52 @@ static MENU_UPDATE_FUNC(s05_busy_flags_ro)
 }
 /* SHOOT05-AB24-RO-TELEMETRY-END */
 
+
+/* AB134: normalize RAW Tv before any capture.
+ * Use the established ML rounding rule, never bypass
+ * the property ACK or observed-RAW verification.
+ */
+static int s05_ab134_normalize(
+    int targets[12], int frames, int base_raw, int *quantized)
+{
+    if (!targets || !quantized || frames < 3 || frames > 12)
+        return 0;
+
+    if (targets[0] != base_raw)
+        return 0;
+
+    *quantized = 0;
+
+    for (int i = 0; i < frames; i++)
+    {
+        int requested = targets[i];
+
+        if (requested < 16 || requested > 160)
+            return 0;
+
+        int actual = round_shutter(requested, 16);
+
+        if (actual < 16 || actual > 160 ||
+            !expo_value_rounding_ok(actual, 0))
+            return 0;
+
+        if (i == 0 && actual != base_raw)
+            return 0;
+
+        /* Do not silently create duplicate exposures. */
+        for (int j = 0; j < i; j++)
+            if (targets[j] == actual)
+                return 0;
+
+        if (actual != requested)
+            (*quantized)++;
+
+        targets[i] = actual;
+    }
+
+    return 1;
+}
+
 static MENU_UPDATE_FUNC(s05_gate_display)
 {
     extern int ml_taking_pic;
@@ -3923,12 +3969,37 @@ static MENU_UPDATE_FUNC(s05_gate_display)
 
     if (result > 0)
     {
-        MENU_SET_VALUE("PLAN OK (RO)");
-        MENU_SET_WARNING(
-            MENU_WARN_INFO,
-            "%d Tv values in range. Read-only; no capture.",
-            result
-        );
+        int q = 0;
+
+        if (!s05_ab134_normalize(
+            target, result, g.base_raw, &q))
+        {
+            MENU_SET_VALUE("BLOCK: ROUND");
+            MENU_SET_WARNING(
+                MENU_WARN_ADVICE,
+                "No valid unique quantized Tv plan."
+            );
+            return;
+        }
+
+        if (q)
+        {
+            MENU_SET_VALUE("PLAN Q:%d (RO)", q);
+            MENU_SET_WARNING(
+                MENU_WARN_INFO,
+                "%d/%d RAW targets rounded; read-only.",
+                q, result
+            );
+        }
+        else
+        {
+            MENU_SET_VALUE("PLAN OK (RO)");
+            MENU_SET_WARNING(
+                MENU_WARN_INFO,
+                "%d Tv values in range. Read-only.",
+                result
+            );
+        }
         return;
     }
 
@@ -4325,6 +4396,7 @@ static int s05_ab131_wait_ready(void)
 /* AB133: automatic capture 3..12; AB92 manual unchanged. */
 typedef struct {
     int frames, step, sequence, base_raw;
+    int quantized;
     int targets[12];
 } s05_ab133_plan;
 
@@ -4353,6 +4425,12 @@ static int s05_ab133_gate(const s05_ab133_plan *p, int expected_raw)
 
     if (count != p->frames) return 0;
 
+    int q = 0;
+    if (!s05_ab134_normalize(
+        regenerated, count, p->base_raw, &q) ||
+        q != p->quantized)
+        return 0;
+
     for (int i = 0; i < count; i++)
         if (regenerated[i] != p->targets[i]) return 0;
 
@@ -4378,10 +4456,16 @@ static int s05_ab133_prepare(s05_ab133_plan *p)
 
     if (count != s05_preview_frames) return 0;
 
+    int q = 0;
+    if (!s05_ab134_normalize(
+        targets, count, g.base_raw, &q))
+        return 0;
+
     p->frames = count;
     p->step = s05_preview_ev8;
     p->sequence = s05_preview_sequence;
     p->base_raw = g.base_raw;
+    p->quantized = q;
 
     for (int i = 0; i < count; i++)
         p->targets[i] = targets[i];
@@ -4607,10 +4691,11 @@ static MENU_SELECT_FUNC(s05_ab131_capture_select)
 static MENU_UPDATE_FUNC(s05_ab131_status_update)
 {
     MENU_SET_VALUE(
-        "%d/%d rc:%d",
+        "%d/%d rc:%d Q:%d",
         s05_ab131_shots,
         s05_ab133_total ? s05_ab133_total : s05_preview_frames,
-        s05_ab131_rc
+        s05_ab131_rc,
+        s05_ab133_latched.quantized
     );
     MENU_SET_WARNING(
         MENU_WARN_INFO,
@@ -5024,7 +5109,7 @@ static struct menu_entry shoot_menus[] = {
                 .help = "Planned Tv RAW values, no capture.",
             },
             {
-                .name = "Capture 5 [TEST]",
+                .name = "Capture [TEST]",
                 .select = s05_ab131_capture_select,
                 .help = "0,-,+ EV. Close ML menu to shoot.",
             },
